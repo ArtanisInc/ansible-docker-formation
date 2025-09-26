@@ -1,0 +1,135 @@
+---
+    # Ensure required directories exist with correct permissions
+    - name: Ensure PostgreSQL data directory exists
+      ansible.builtin.file:
+        path: "{{ postgres_data_path }}"
+        state: directory
+        owner: "999"
+        group: "999"
+        mode: '0700'
+
+    - name: Ensure Prometheus config directory exists
+      ansible.builtin.file:
+        path: "{{ prometheus_config_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Ensure Prometheus data directory exists
+      ansible.builtin.file:
+        path: "{{ prometheus_data_path }}"
+        state: directory
+        owner: "65534"
+        group: "65534"
+        mode: '0755'
+
+    - name: Ensure Prometheus query log directory exists
+      ansible.builtin.file:
+        path: "{{ prometheus_data_path }}/data"
+        state: directory
+        owner: "65534"
+        group: "65534"
+        mode: '0755'
+
+    - name: Ensure Grafana provisioning directories exist
+      ansible.builtin.file:
+        path: "{{ grafana_provisioning_path }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - ""
+        - "dashboards"
+        - "datasources"
+
+    # Create Docker network
+    - name: Create monitoring network
+      docker_network:
+        name: "{{ monitoring_network }}"
+        state: present
+
+    # Deploy Node Exporter container
+    - name: Deploy Node Exporter
+      docker_container:
+        name: node_exporter
+        image: prom/node-exporter
+        ports:
+          - "9100:9100"
+        networks:
+          - name: "{{ monitoring_network }}"
+        restart_policy: unless-stopped
+
+    # Deploy PostgreSQL container
+    - name: Deploy PostgreSQL
+      docker_container:
+        name: postgres
+        image: postgres
+        env:
+          POSTGRES_DB: "{{ postgres_db }}"
+          POSTGRES_USER: "{{ postgres_user }}"
+          POSTGRES_PASSWORD: "{{ postgres_password }}"
+          PGDATA: "/var/lib/postgresql/data/pgdata"
+        ports:
+          - "{{ postgres_port }}:5432"
+        volumes:
+          - "{{ postgres_data_path }}:/var/lib/postgresql/data"
+        networks:
+          - name: "{{ monitoring_network }}"
+        restart_policy: always
+
+    # Copy Prometheus configuration file
+    - name: Copy Prometheus configuration file
+      ansible.builtin.copy:
+        src: prometheus.yml
+        dest: "{{ prometheus_config_path }}/prometheus.yml"
+        mode: '0644'
+
+    # Deploy Prometheus container
+    - name: Deploy Prometheus
+      docker_container:
+        name: prometheus
+        image: prom/prometheus
+        ports:
+          - "{{ prometheus_port }}:9090"
+        volumes:
+          - "{{ prometheus_config_path }}:/etc/prometheus"
+          - "{{ prometheus_data_path }}:/prometheus"
+        entrypoint: ["/bin/prometheus", "--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus/data"]
+        networks:
+          - name: "{{ monitoring_network }}"
+        restart_policy: unless-stopped
+
+    # Copy Grafana dashboard configuration
+    - name: Copy Grafana dashboard configuration
+      ansible.builtin.copy:
+        src: grafana_dashboard.json
+        dest: "{{ grafana_provisioning_path }}/dashboards/grafana_dashboard.json"
+        mode: '0644'
+
+    # Copy Grafana dashboard provisioning config
+    - name: Copy Grafana dashboard provisioning config
+      ansible.builtin.template:
+        src: dashboard.yml.j2
+        dest: "{{ grafana_provisioning_path }}/dashboards/dashboard.yml"
+        mode: '0644'
+
+    # Copy Grafana datasource provisioning config
+    - name: Copy Grafana datasource provisioning config
+      ansible.builtin.template:
+        src: datasource.yml.j2
+        dest: "{{ grafana_provisioning_path }}/datasources/datasource.yml"
+        mode: '0644'
+
+    # Deploy Grafana container
+    - name: Deploy Grafana
+      docker_container:
+        name: grafana
+        image: grafana/grafana
+        ports:
+          - "{{ grafana_port }}:3000"
+        volumes:
+          - "{{ grafana_provisioning_path }}:/etc/grafana/provisioning"
+        env:
+          GF_SECURITY_ADMIN_USER: "{{ grafana_admin_user }}"
+          GF_SECURITY_ADMIN_PASSWORD: "{{ grafana_admin_password }}"
+        networks:
+          - name: "{{ monitoring_network }}"
+        restart_policy: unless-stopped

@@ -1,0 +1,6 @@
+---
+# Docker
+- hosts: docker
+  become: true
+  roles:
+    - role: docker

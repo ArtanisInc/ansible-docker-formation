@@ -1,0 +1,117 @@
+# ################### CONFIGURATION VARIABLES ########################
+IMAGE_NAME       = "bento/ubuntu-22.04"   # Image à utiliser
+MASTER_MEM       = 1024                   # Quantité de RAM allouée pour le master
+SLAVE_MEM        = 2048                   # Quantité de RAM allouée pour chaque slave
+CPU              = 1                      # Nombre de processeurs
+SLAVE_NBR        = 1                      # Nombre de machines esclaves
+PRIVATE_IP_BASE  = "192.168.10."          # Base IP pour le réseau privé
+
+# Script commun de provisioning
+def common_provisioning_script
+    <<-SCRIPT
+        set -e
+        export DEBIAN_FRONTEND=noninteractive
+
+        echo "Mise à jour des paquets..."
+        sudo apt update -y
+
+        echo "Configuration du clavier en français..."
+        echo "keyboard-configuration keyboard-configuration/layoutcode select fr" | sudo debconf-set-selections
+        sudo apt install -y keyboard-configuration
+        sudo sed -i 's/XKBLAYOUT="us"/XKBLAYOUT="fr"/g' /etc/default/keyboard
+        sudo dpkg-reconfigure -f noninteractive keyboard-configuration
+        sudo systemctl restart keyboard-setup
+    SCRIPT
+end
+
+Vagrant.configure("2") do |config|
+    # Désactivation de la vérification automatique des mises à jour de la box
+    config.vm.box_check_update = false
+
+    # Désactivation de l'insertion automatique des clés SSH pour toutes les machines
+    config.ssh.insert_key = false
+
+    # --------------------------------------------------
+    # Configuration des machines esclaves
+    # --------------------------------------------------
+    (1..SLAVE_NBR).each do |i|
+        config.vm.define "slave-#{i}" do |slave|
+            slave.vm.box      = IMAGE_NAME
+            slave.vm.hostname = "slave-#{i}"
+            slave.vm.network  "private_network", ip: "#{PRIVATE_IP_BASE}#{10 + i}"
+
+            slave.vm.provider "vmware_desktop" do |v|
+                v.memory = SLAVE_MEM
+                v.cpus   = CPU
+            end
+
+            slave.vm.provision "shell", inline: common_provisioning_script
+        end
+    end
+
+    # --------------------------------------------------
+    # Configuration de la machine master (machine Ansible)
+    # --------------------------------------------------
+    config.vm.define "master" do |master|
+        master.vm.box      = IMAGE_NAME
+        master.vm.hostname = "master"
+        master.vm.network  "private_network", ip: "#{PRIVATE_IP_BASE}10"
+
+        master.vm.provider "vmware_desktop" do |v|
+            v.memory = MASTER_MEM
+            v.cpus   = CPU
+        end
+
+        # Synchronisation du dossier Ansible
+        master.vm.synced_folder "ansible", "/home/vagrant/ansible-docker",
+                                create: true,
+                                owner: "vagrant",
+                                group: "vagrant",
+                                mount_options: ["dmode=775,fmode=664"]
+
+        # Provisionnement shell pour configurer la VM et préparer SSH
+        master.vm.provision "shell", privileged: false, inline: common_provisioning_script + <<-SCRIPT
+            sudo apt install -y sshpass tree
+
+            echo "Ajout des machines esclaves dans /etc/hosts"
+            for i in $(seq 1 #{SLAVE_NBR}); do
+                echo "#{PRIVATE_IP_BASE}$((10 + i)) slave-${i}" | sudo tee -a /etc/hosts
+            done
+
+            echo "Génération de la paire de clés SSH si elle n'existe pas déjà"
+            if [ ! -f ~/.ssh/id_rsa ]; then
+                ssh-keygen -q -t rsa -b 4096 -f ~/.ssh/id_rsa -N ""
+            fi
+
+            echo "Copie de la clé SSH sur chaque machine esclave"
+            for i in $(seq 1 #{SLAVE_NBR}); do
+                SLAVE_IP="#{PRIVATE_IP_BASE}$((10 + i))"
+                sshpass -p "vagrant" ssh-copy-id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null vagrant@$SLAVE_IP
+            done
+
+            echo "Config fichier ansible.cfg en cas de lancement manuel d'un playbook depuis la VM"
+            echo 'export ANSIBLE_CONFIG=/home/vagrant/ansible-docker/ansible.cfg' >> ~/.bashrc
+            source ~/.bashrc
+
+            echo "changeme" > /home/vagrant/.vault_pass
+        SCRIPT
+
+        # Exécution des playbooks via ansible_local
+        master.vm.provision "docker", type: "ansible_local" do |ansible|
+            ansible.install             = true
+            ansible.verbose             = false
+            ansible.limit               = "all"
+            ansible.config_file         = "/home/vagrant/ansible-docker/ansible.cfg"
+            ansible.inventory_path      = "/home/vagrant/ansible-docker/hosts"
+            ansible.playbook            = "/home/vagrant/ansible-docker/playbooks/install_docker.yml"
+        end
+        master.vm.provision "postegresql_prometheuse", type: "ansible_local" do |ansible|
+            ansible.verbose             = false
+            ansible.limit               = "all"
+            ansible.config_file         = "/home/vagrant/ansible-docker/ansible.cfg"
+            ansible.inventory_path      = "/home/vagrant/ansible-docker/hosts"
+            ansible.playbook            = "/home/vagrant/ansible-docker/playbooks/deploy_services.yml"
+            ansible.vault_password_file = "/home/vagrant/.vault_pass"
+        end
+    end
+end

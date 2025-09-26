@@ -1,0 +1,24 @@
+---
+- name: Deploy PostgreSQL, Prometheus, and Grafana services
+  hosts: docker
+  become: true
+  vars_files:
+    - vault.yml
+  vars:
+    postgres_db: mydatabase
+    postgres_user: "{{ vault_postgres_user }}"
+    postgres_password: "{{ vault_postgres_password }}"
+    postgres_port: 5432
+    prometheus_port: 9090
+    grafana_port: 3000
+    prometheus_config_path: "/opt/prometheus/config"
+    prometheus_data_path: "/opt/prometheus/data"
+    postgres_data_path: "/var/lib/postgresql/data"
+    grafana_provisioning_path: "/etc/grafana/provisioning"
+    grafana_host_url: "http://localhost:3000"
+    grafana_admin_user: "{{ vault_grafana_user }}"
+    grafana_admin_password: "{{ vault_grafana_password }}"
+    monitoring_network: "monitoring"
+
+  roles:
+    - postgresql_prometheus
