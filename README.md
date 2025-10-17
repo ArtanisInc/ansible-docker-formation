@@ -1,9 +1,5 @@
 # Ansible Docker - Exercice de Formation
 
-Ce projet est un exercice de formation qui démontre l'utilisation d'Ansible avec Vagrant pour automatiser le déploiement de Docker et de services dans un environnement virtualisé.
-
-## Description
-
 Ce projet configure automatiquement un environnement composé de :
 - Une machine **master** (serveur Ansible)
 - Une ou plusieurs machines **slave** (cibles de déploiement)
@@ -13,7 +9,7 @@ L'objectif est d'installer Docker sur les machines slaves et de déployer des se
 ## Prérequis
 
 - [Vagrant](https://www.vagrantup.com/) installé
-- [VMware Desktop](https://www.vmware.com/products/workstation-pro.html) ou VirtualBox
+- [VMware Desktop](https://www.vmware.com/products/workstation-pro.html)
 - Au moins 3 GB de RAM disponible
 
 ## Structure du Projet
@@ -89,12 +85,3 @@ vagrant destroy
 # Voir le statut des machines
 vagrant status
 ```
-
-## Notes de Formation
-
-Ce projet illustre :
-- Configuration d'un environnement multi-machine avec Vagrant
-- Automatisation SSH et configuration réseau
-- Utilisation d'Ansible pour la gestion de configuration
-- Déploiement de services avec Docker
-- Utilisation d'Ansible Vault pour les secrets
